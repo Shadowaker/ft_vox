@@ -27,8 +27,9 @@ public:
 	World(uint64_t seed = DEFAULT_SEED);
 
 	void update(const glm::vec3& playerPos);
-	// vp = projection * view, used to cull chunks outside the frustum
-	void render(const Shader& shader, const glm::mat4& vp) const;
+	// vp = projection * view, used to cull chunks outside the frustum.
+	// showCaveDebug: render the translucent underground-air visualization.
+	void render(const Shader& shader, const glm::mat4& vp, bool showCaveDebug = false) const;
 
 private:
 	void loadChunk(int cx, int cz);

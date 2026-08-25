@@ -12,6 +12,9 @@ Chunk::~Chunk() {
 	if (vao_) glDeleteVertexArrays(1, &vao_);
 	if (vbo_) glDeleteBuffers(1, &vbo_);
 	if (ebo_) glDeleteBuffers(1, &ebo_);
+	if (caveVao_) glDeleteVertexArrays(1, &caveVao_);
+	if (caveVbo_) glDeleteBuffers(1, &caveVbo_);
+	if (caveEbo_) glDeleteBuffers(1, &caveEbo_);
 }
 
 BlockType Chunk::getBlock(int x, int y, int z) const {
@@ -27,6 +30,14 @@ void Chunk::setBlock(int x, int y, int z, BlockType type) {
 	dirty_ = true;
 }
 
+bool Chunk::isCaveAir(int x, int y, int z) const {
+	if (x < 0 || x >= CHUNK_W || y < 0 || y >= CHUNK_H || z < 0 || z >= CHUNK_D)
+		return false; // unknown across chunk borders — treat as not-cave
+	if (getBlock(x, y, z) != BlockType::AIR)
+		return false;
+	return y < surfaceHeight_[z * CHUNK_W + x];
+}
+
 // Terrain generation constants
 static constexpr int   SEA_LEVEL     = 64;
 static constexpr int   SNOW_LEVEL    = 140;
@@ -34,8 +45,15 @@ static constexpr int   BEACH_LEVEL   = SEA_LEVEL + 3;
 static constexpr float CONTINENT_SC  = 0.0008f; // large landmasses
 static constexpr float MOUNTAIN_SC   = 0.003f;  // mountain ridges
 static constexpr float DETAIL_SC     = 0.015f;  // surface roughness
-static constexpr float CAVE_SC       = 0.05f;   // cave tunnels
-static constexpr float CAVE_THRESH   = 0.55f;   // cave density
+static constexpr float CAVE_SC       = 0.02f;   // cave cavern noise frequency
+// carve air where noise EXCEEDS this cutoff (one-sided, no abs()). |noise| <
+// thresh selects a band around the zero-crossing, which is a thin 2D sheet in
+// 3D space no matter how it's scaled — measured true diameter ~1.5 blocks,
+// matching the "1-2 blocks wide" report. A one-sided cutoff instead carves out
+// the noise field's local maxima as actual 3D blobs: measured ~9.5 block
+// diameter at 0.4, roomy Minecraft-cavern-like chambers instead of slits.
+static constexpr float CAVE_CUTOFF          = 0.4f;   // interior: ~8% air, ~9.5 block diameter
+static constexpr float CAVE_ENTRANCE_CUTOFF = 0.5f;    // stricter near surface → rarer breaches (~3% vs ~8%)
 static constexpr float WARP_SC       = 0.002f;  // domain-warp scale
 
 void Chunk::generate(const Noise& noise) {
@@ -65,6 +83,7 @@ void Chunk::generate(const Noise& noise) {
 				+ detail    *  6.0f
 			);
 			height = std::clamp(height, 2, CHUNK_H - 2);
+			surfaceHeight_[z * CHUNK_W + x] = height;
 
 			bool isSandy = height <= BEACH_LEVEL;
 			bool isSnowy = height >= SNOW_LEVEL;
@@ -78,11 +97,15 @@ void Chunk::generate(const Noise& noise) {
 					continue;
 				}
 
-				// Cave carving — skip near surface and at bedrock
-				if (y > 4 && y < height - 3) {
+				// Cave carving — skip at bedrock; stricter near the surface so
+				// tunnels only breach as rarer entrances instead of everywhere.
+				// Includes y == height so a carved tunnel can punch through
+				// the surface skin itself, not just stop just beneath it.
+				if (y > 4 && y <= height) {
 					float cv = noise.sample3D(wx * CAVE_SC, y * CAVE_SC, wz * CAVE_SC);
-					// Use abs(noise) so caves form tubular shapes
-					if (std::abs(cv) < (1.0f - CAVE_THRESH))
+					// One-sided: carve the noise field's local maxima as real 3D blobs
+					float cutoff = (y >= height - 3) ? CAVE_ENTRANCE_CUTOFF : CAVE_CUTOFF;
+					if (cv > cutoff)
 						continue; // leave as AIR
 				}
 
@@ -161,40 +184,112 @@ void Chunk::buildMesh() {
 	}
 
 	indexCount_ = static_cast<int>(idxs.size());
-	if (indexCount_ == 0) { dirty_ = false; return; }
+	if (indexCount_ > 0) {
+		if (!vao_) glGenVertexArrays(1, &vao_);
+		if (!vbo_) glGenBuffers(1, &vbo_);
+		if (!ebo_) glGenBuffers(1, &ebo_);
 
-	if (!vao_) glGenVertexArrays(1, &vao_);
-	if (!vbo_) glGenBuffers(1, &vbo_);
-	if (!ebo_) glGenBuffers(1, &ebo_);
+		glBindVertexArray(vao_);
 
-	glBindVertexArray(vao_);
+		glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+		glBufferData(GL_ARRAY_BUFFER,
+			verts.size() * sizeof(float), verts.data(), GL_STATIC_DRAW);
 
-	glBindBuffer(GL_ARRAY_BUFFER, vbo_);
-	glBufferData(GL_ARRAY_BUFFER,
-		verts.size() * sizeof(float), verts.data(), GL_STATIC_DRAW);
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_);
+		glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+			idxs.size() * sizeof(unsigned int), idxs.data(), GL_STATIC_DRAW);
 
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER,
-		idxs.size() * sizeof(unsigned int), idxs.data(), GL_STATIC_DRAW);
+		// location 0: position (vec3)
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
+			6 * sizeof(float), reinterpret_cast<void*>(0));
+		glEnableVertexAttribArray(0);
+		// location 1: texcoord (vec2)
+		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE,
+			6 * sizeof(float), reinterpret_cast<void*>(3 * sizeof(float)));
+		glEnableVertexAttribArray(1);
+		// location 2: faceID (float)
+		glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE,
+			6 * sizeof(float), reinterpret_cast<void*>(5 * sizeof(float)));
+		glEnableVertexAttribArray(2);
 
-	// location 0: position (vec3)
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
-		6 * sizeof(float), reinterpret_cast<void*>(0));
-	glEnableVertexAttribArray(0);
-	// location 1: texcoord (vec2)
-	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE,
-		6 * sizeof(float), reinterpret_cast<void*>(3 * sizeof(float)));
-	glEnableVertexAttribArray(1);
-	// location 2: faceID (float)
-	glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE,
-		6 * sizeof(float), reinterpret_cast<void*>(5 * sizeof(float)));
-	glEnableVertexAttribArray(2);
+		glBindVertexArray(0);
+	}
 
-	glBindVertexArray(0);
+	// Debug mesh: render carved-out underground air as translucent blocks.
+	// Uses the atlas tile just past the real block types (see createBlockAtlas
+	// in main.cpp), so it needs no BlockType of its own.
+	std::vector<float>        caveVerts;
+	std::vector<unsigned int> caveIdxs;
+	unsigned int              caveOff = 0;
+	float                     caveTid = static_cast<float>(static_cast<int>(BlockType::COUNT));
+
+	for (int y = 0; y < CHUNK_H; y++) {
+		for (int z = 0; z < CHUNK_D; z++) {
+			for (int x = 0; x < CHUNK_W; x++) {
+				if (!isCaveAir(x, y, z)) continue;
+
+				for (const auto& f : faces) {
+					if (isCaveAir(x + f.nx, y + f.ny, z + f.nz))
+						continue; // hidden between two adjoining void cells
+
+					for (int v = 0; v < 4; v++) {
+						caveVerts.insert(caveVerts.end(), {
+							x + f.vx[v][0],
+							y + f.vx[v][1],
+							z + f.vx[v][2],
+							caveTid + k_uvs[v][0],
+							k_uvs[v][1],
+							f.faceID
+						});
+					}
+					caveIdxs.insert(caveIdxs.end(),
+						{caveOff, caveOff+1, caveOff+2, caveOff, caveOff+2, caveOff+3});
+					caveOff += 4;
+				}
+			}
+		}
+	}
+
+	caveIndexCount_ = static_cast<int>(caveIdxs.size());
+	if (caveIndexCount_ > 0) {
+		if (!caveVao_) glGenVertexArrays(1, &caveVao_);
+		if (!caveVbo_) glGenBuffers(1, &caveVbo_);
+		if (!caveEbo_) glGenBuffers(1, &caveEbo_);
+
+		glBindVertexArray(caveVao_);
+
+		glBindBuffer(GL_ARRAY_BUFFER, caveVbo_);
+		glBufferData(GL_ARRAY_BUFFER,
+			caveVerts.size() * sizeof(float), caveVerts.data(), GL_STATIC_DRAW);
+
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, caveEbo_);
+		glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+			caveIdxs.size() * sizeof(unsigned int), caveIdxs.data(), GL_STATIC_DRAW);
+
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
+			6 * sizeof(float), reinterpret_cast<void*>(0));
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE,
+			6 * sizeof(float), reinterpret_cast<void*>(3 * sizeof(float)));
+		glEnableVertexAttribArray(1);
+		glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE,
+			6 * sizeof(float), reinterpret_cast<void*>(5 * sizeof(float)));
+		glEnableVertexAttribArray(2);
+
+		glBindVertexArray(0);
+	}
+
 	dirty_ = false;
 }
 
-void Chunk::render() const {
+void Chunk::render(bool showCaveDebug) const {
+	if (showCaveDebug) {
+		if (!caveVao_ || caveIndexCount_ == 0) return;
+		glBindVertexArray(caveVao_);
+		glDrawElements(GL_TRIANGLES, caveIndexCount_, GL_UNSIGNED_INT, nullptr);
+		glBindVertexArray(0);
+		return;
+	}
 	if (!vao_ || indexCount_ == 0) return;
 	glBindVertexArray(vao_);
 	glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, nullptr);

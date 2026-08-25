@@ -24,7 +24,7 @@ void World::update(const glm::vec3& playerPos) {
 	}
 }
 
-void World::render(const Shader& shader, const glm::mat4& vp) const {
+void World::render(const Shader& shader, const glm::mat4& vp, bool showCaveDebug) const {
 	frustum_.update(vp);
 
 	for (const auto& [key, chunk] : chunks_) {
@@ -38,7 +38,7 @@ void World::render(const Shader& shader, const glm::mat4& vp) const {
 		glm::mat4 model = glm::translate(glm::mat4(1.0f),
 			glm::vec3(key.x * CHUNK_W, 0.0f, key.z * CHUNK_D));
 		shader.setMat4("model", model);
-		chunk->render();
+		chunk->render(showCaveDebug);
 	}
 }
 

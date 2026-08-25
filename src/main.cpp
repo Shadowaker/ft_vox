@@ -11,6 +11,10 @@ static bool    mouse_init = true;
 static float   lastX = 0.0f;
 static float   lastY = 0.0f;
 
+// Debug: press C to toggle the translucent underground-air (cave) view
+static bool    g_showCaveDebug = false;
+static bool    g_cKeyWasDown   = false;
+
 static void framebuffer_size_callback(GLFWwindow*, int width, int height) {
 	glViewport(0, 0, width, height);
 }
@@ -43,9 +47,17 @@ static void processInput(GLFWwindow* window, float deltaTime) {
 		camera.processKeyboard(CameraDirection::LEFT,     speed * deltaTime);
 	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
 		camera.processKeyboard(CameraDirection::RIGHT,    speed * deltaTime);
+
+	// Edge-triggered toggle: flip once per physical press, not once per frame held
+	bool cPressed = glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS;
+	if (cPressed && !g_cKeyWasDown)
+		g_showCaveDebug = !g_showCaveDebug;
+	g_cKeyWasDown = cPressed;
 }
 
 // One color 16x16 tile per block, defined in the shader: atlas_u = TexCoord.x / ATLAS_W  where u = typeIndex + corner_u.
+// One extra tile past the real block types is reserved for the cave-debug
+// visualization (Chunk::buildMesh tags it with tid == BlockType::COUNT).
 static unsigned int createBlockAtlas() {
 	static const unsigned char colors[][4] = {
 		{   0,   0,   0,   0 }, // AIR
@@ -55,8 +67,9 @@ static unsigned int createBlockAtlas() {
 		{ 210, 200, 140, 255 }, // SAND
 		{ 240, 245, 255, 255 }, // SNOW
 		{  30, 100, 220, 220 }, // WATER
+		{ 255,  60,  60, 130 }, // DEBUG: cave air
 	};
-	constexpr int COUNT = static_cast<int>(BlockType::COUNT);
+	constexpr int COUNT = static_cast<int>(BlockType::COUNT) + 1; // +1 for the debug tile
 	constexpr int TILE  = 16;
 	constexpr int W     = COUNT * TILE;
 	constexpr int H     = TILE;
@@ -154,7 +167,23 @@ int main() {
 			shader.setMat4("view", view);
 			shader.setMat4("projection", proj);
 			shader.setInt("textureAtlas", 0);
-			world.render(shader, proj * view);
+
+			if (g_showCaveDebug) {
+				// Only the carved-out underground air renders (translucent);
+				// normal solid terrain is skipped entirely, so it reads as invisible.
+				glEnable(GL_BLEND);
+				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+				glDisable(GL_CULL_FACE); // see both sides of the hollowed-out shell
+				glDepthMask(GL_FALSE);   // avoid translucent faces occluding each other
+
+				world.render(shader, proj * view, true);
+
+				glDepthMask(GL_TRUE);
+				glEnable(GL_CULL_FACE);
+				glDisable(GL_BLEND);
+			} else {
+				world.render(shader, proj * view);
+			}
 
 			glfwSwapBuffers(window);
 			glfwPollEvents();
