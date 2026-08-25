@@ -1,0 +1,21 @@
+# Build output
+obj/
+ft_vox
+*.o
+*.out
+
+# dependencies
+libs/
+
+# Project assets (not tracked in repo)
+assets/
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS junk
+.DS_Store
+Thumbs.db
