@@ -42,6 +42,28 @@ void World::render(const Shader& shader, const glm::mat4& vp, bool showCaveDebug
 	}
 }
 
+std::string World::getBiomeAt(const glm::vec3& pos) const {
+	int wx = static_cast<int>(std::floor(pos.x));
+	int wz = static_cast<int>(std::floor(pos.z));
+	int cx = static_cast<int>(std::floor(pos.x / CHUNK_W));
+	int cz = static_cast<int>(std::floor(pos.z / CHUNK_D));
+
+	auto it = chunks_.find(ChunkKey{cx, cz});
+	if (it == chunks_.end())
+		return "UNKNOWN";
+
+	int lx = wx - cx * CHUNK_W;
+	int lz = wz - cz * CHUNK_D;
+	int height = it->second->getSurfaceHeight(lx, lz);
+	if (height < 0)
+		return "UNKNOWN";
+
+	if (height <= SEA_LEVEL)   return "OCEAN";
+	if (height >= SNOW_LEVEL)  return "SNOWY PEAKS";
+	if (height <= BEACH_LEVEL) return "BEACH";
+	return "PLAINS";
+}
+
 void World::loadChunk(int cx, int cz) {
 	auto chunk = std::make_unique<Chunk>(cx, cz);
 	chunk->generate(noise_);

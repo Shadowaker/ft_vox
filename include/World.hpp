@@ -6,6 +6,7 @@
 #include "Shader.hpp"
 #include <glm/glm.hpp>
 #include <memory>
+#include <string>
 #include <unordered_map>
 
 struct ChunkKey {
@@ -30,6 +31,11 @@ public:
 	// vp = projection * view, used to cull chunks outside the frustum.
 	// showCaveDebug: render the translucent underground-air visualization.
 	void render(const Shader& shader, const glm::mat4& vp, bool showCaveDebug = false) const;
+
+	// Name of the biome at this world position's column, derived from the
+	// same height bands used during terrain generation. "UNKNOWN" if the
+	// containing chunk hasn't been generated/loaded yet.
+	std::string getBiomeAt(const glm::vec3& pos) const;
 
 private:
 	void loadChunk(int cx, int cz);

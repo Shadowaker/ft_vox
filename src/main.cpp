@@ -137,6 +137,7 @@ int main() {
 	try {
 		Shader       shader("shaders/vertex.glsl", "shaders/fragment.glsl");
 		World        world;
+		Hud          hud;
 		unsigned int atlas = createBlockAtlas();
 
 		glActiveTexture(GL_TEXTURE0);
@@ -145,10 +146,24 @@ int main() {
 		float deltaTime = 0.0f;
 		float lastFrame = 0.0f;
 
+		// FPS is averaged over a short window and refreshed a few times a
+		// second rather than every frame, so the HUD number doesn't flicker.
+		float fpsTimer   = 0.0f;
+		int   fpsFrames  = 0;
+		int   fpsDisplay = 0;
+
 		while (!glfwWindowShouldClose(window)) {
 			float currentFrame = static_cast<float>(glfwGetTime());
 			deltaTime = currentFrame - lastFrame;
 			lastFrame = currentFrame;
+
+			fpsTimer += deltaTime;
+			fpsFrames++;
+			if (fpsTimer >= 0.5f) {
+				fpsDisplay = static_cast<int>(fpsFrames / fpsTimer);
+				fpsFrames  = 0;
+				fpsTimer   = 0.0f;
+			}
 
 			processInput(window, deltaTime);
 			world.update(camera.getPosition());
@@ -183,6 +198,26 @@ int main() {
 				glDisable(GL_BLEND);
 			} else {
 				world.render(shader, proj * view);
+			}
+
+			// HUD: FPS counter and current biome, top-left corner, always on top
+			{
+				std::string fpsLine   = "FPS: " + std::to_string(fpsDisplay);
+				std::string biomeLine = world.getBiomeAt(camera.getPosition());
+				constexpr float scale      = 2.0f;
+				constexpr float lineHeight = 8.0f * scale + 4.0f; // glyph cell + gap
+
+				glDisable(GL_DEPTH_TEST); // always draw on top of the world
+				glDisable(GL_CULL_FACE);
+				glEnable(GL_BLEND);
+				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+				hud.renderText(fpsLine,   10.0f, 10.0f,              scale, width, height);
+				hud.renderText(biomeLine, 10.0f, 10.0f + lineHeight, scale, width, height);
+
+				glDisable(GL_BLEND);
+				glEnable(GL_CULL_FACE);
+				glEnable(GL_DEPTH_TEST);
 			}
 
 			glfwSwapBuffers(window);

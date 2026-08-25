@@ -38,10 +38,13 @@ bool Chunk::isCaveAir(int x, int y, int z) const {
 	return y < surfaceHeight_[z * CHUNK_W + x];
 }
 
-// Terrain generation constants
-static constexpr int   SEA_LEVEL     = 64;
-static constexpr int   SNOW_LEVEL    = 140;
-static constexpr int   BEACH_LEVEL   = SEA_LEVEL + 3;
+int Chunk::getSurfaceHeight(int x, int z) const {
+	if (x < 0 || x >= CHUNK_W || z < 0 || z >= CHUNK_D)
+		return -1;
+	return surfaceHeight_[z * CHUNK_W + x];
+}
+
+// Terrain generation constants (SEA_LEVEL, SNOW_LEVEL, BEACH_LEVEL are in Chunk.hpp)
 static constexpr float CONTINENT_SC  = 0.0008f; // large landmasses
 static constexpr float MOUNTAIN_SC   = 0.003f;  // mountain ridges
 static constexpr float DETAIL_SC     = 0.015f;  // surface roughness

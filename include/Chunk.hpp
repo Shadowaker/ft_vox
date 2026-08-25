@@ -24,6 +24,12 @@ constexpr int CHUNK_W = 16;
 constexpr int CHUNK_H = 256;
 constexpr int CHUNK_D = 16;
 
+// Height bands used for both block placement (Chunk::generate) and biome
+// naming (World::getBiomeAt) — kept in one place so they can't drift apart.
+constexpr int SEA_LEVEL   = 64;
+constexpr int SNOW_LEVEL  = 140;
+constexpr int BEACH_LEVEL = SEA_LEVEL + 3;
+
 class Chunk {
 public:
 	Chunk(int cx, int cz);
@@ -40,6 +46,10 @@ public:
 
 	bool       isDirty() const { return dirty_; }
 	glm::ivec2 getPos() const { return {cx_, cz_}; }
+
+	// Surface height (terrain top, pre-cave-carving) at a local column.
+	// Returns -1 if (x, z) is outside the chunk.
+	int getSurfaceHeight(int x, int z) const;
 
 private:
 	// True for AIR blocks enclosed underground (below the column's surface
