@@ -18,4 +18,5 @@
 #include "../include/Chunk.hpp"
 #include "../include/Hud.hpp"
 #include "../include/Shader.hpp"
+#include "../include/Skybox.hpp"
 #include "../include/World.hpp"

@@ -159,6 +159,7 @@ int main(int argc, char** argv) {
 		Shader       shader("shaders/vertex.glsl", "shaders/fragment.glsl");
 		World        world(seed);
 		Hud          hud;
+		Skybox       skybox;
 		unsigned int atlas = createBlockAtlas();
 
 		glActiveTexture(GL_TEXTURE0);
@@ -198,6 +199,21 @@ int main(int argc, char** argv) {
 				static_cast<float>(width) / static_cast<float>(height),
 				NEAR_PLANE, FAR_PLANE
 			);
+
+			// Skybox first: its vertex shader forces depth to exactly 1.0
+			// (the far plane), so GL_LEQUAL is needed for it to pass against
+			// the freshly cleared depth buffer (also 1.0); depth writes off
+			// so it can't interfere with real geometry's depth testing, and
+			// culling off since the cube is viewed from the inside.
+			glDepthMask(GL_FALSE);
+			glDisable(GL_CULL_FACE);
+			glDepthFunc(GL_LEQUAL);
+
+			skybox.render(view, proj);
+
+			glDepthFunc(GL_LESS);
+			glEnable(GL_CULL_FACE);
+			glDepthMask(GL_TRUE);
 
 			shader.use();
 			shader.setMat4("view", view);
