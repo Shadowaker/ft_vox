@@ -31,6 +31,9 @@ public:
 	// vp = projection * view, used to cull chunks outside the frustum.
 	// showCaveDebug: render the translucent underground-air visualization.
 	void render(const Shader& shader, const glm::mat4& vp, bool showCaveDebug = false) const;
+	// Translucent water surfaces, drawn as a separate pass after opaque
+	// terrain (see main.cpp for the blend/depth-write state around this).
+	void renderWater(const Shader& shader, const glm::mat4& vp) const;
 
 	// Name of the biome at this world position's column, derived from the
 	// same height bands used during terrain generation. "UNKNOWN" if the

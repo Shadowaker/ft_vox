@@ -36,10 +36,18 @@ public:
 	~Chunk();
 
 	void generate(const Noise& noise);
-	void buildMesh();
+	// Neighbor chunks (already-loaded, may be null) let mesh building see
+	// past this chunk's own edge instead of assuming AIR there — without
+	// them, chunk borders show phantom faces (visible as seams in water).
+	void buildMesh(const Chunk* north = nullptr, const Chunk* south = nullptr,
+	               const Chunk* east = nullptr,  const Chunk* west = nullptr);
+	void markDirty() { dirty_ = true; }
 	// showCaveDebug: draw the translucent underground-air visualization mesh
 	// instead of the normal solid terrain mesh (see World::render).
 	void render(bool showCaveDebug = false) const;
+	// Translucent water surface — separate mesh/draw call so it can be
+	// rendered with blending after opaque terrain (see World::renderWater).
+	void renderWater() const;
 
 	BlockType getBlock(int x, int y, int z) const;
 	void      setBlock(int x, int y, int z, BlockType type);
@@ -55,6 +63,15 @@ private:
 	// True for AIR blocks enclosed underground (below the column's surface
 	// height) — i.e. actual carved cave space, not open sky above terrain.
 	bool isCaveAir(int x, int y, int z) const;
+
+	// Cross-chunk versions: fall back to the given neighbor when (x, y, z)
+	// steps outside this chunk (a face offset only ever crosses one axis at
+	// a time, so only one of the four neighbors is ever consulted). A null
+	// neighbor (not loaded) falls back to AIR/not-cave, same as before.
+	BlockType getBlockCross(int x, int y, int z, const Chunk* north, const Chunk* south,
+	                         const Chunk* east, const Chunk* west) const;
+	bool isCaveAirCross(int x, int y, int z, const Chunk* north, const Chunk* south,
+	                     const Chunk* east, const Chunk* west) const;
 
 	int  cx_, cz_;
 	bool dirty_ = true;
@@ -72,4 +89,12 @@ private:
 	unsigned int caveVbo_ = 0;
 	unsigned int caveEbo_ = 0;
 	int          caveIndexCount_ = 0;
+
+	// Water mesh: WATER blocks are transparent for the solid-mesh pass (so
+	// they don't hide neighboring terrain faces) but need their own visible
+	// surface, drawn as a separate translucent pass.
+	unsigned int waterVao_ = 0;
+	unsigned int waterVbo_ = 0;
+	unsigned int waterEbo_ = 0;
+	int          waterIndexCount_ = 0;
 };

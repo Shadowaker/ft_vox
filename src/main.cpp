@@ -198,6 +198,19 @@ int main() {
 				glDisable(GL_BLEND);
 			} else {
 				world.render(shader, proj * view);
+
+				// Translucent water pass: drawn after opaque terrain so the
+				// depth buffer already holds solid geometry (correct
+				// occlusion); depth writes off so overlapping water faces
+				// don't fight each other, blend on for the atlas's alpha.
+				glEnable(GL_BLEND);
+				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+				glDepthMask(GL_FALSE);
+
+				world.renderWater(shader, proj * view);
+
+				glDepthMask(GL_TRUE);
+				glDisable(GL_BLEND);
 			}
 
 			// HUD: FPS counter and current biome, top-left corner, always on top

@@ -15,6 +15,9 @@ Chunk::~Chunk() {
 	if (caveVao_) glDeleteVertexArrays(1, &caveVao_);
 	if (caveVbo_) glDeleteBuffers(1, &caveVbo_);
 	if (caveEbo_) glDeleteBuffers(1, &caveEbo_);
+	if (waterVao_) glDeleteVertexArrays(1, &waterVao_);
+	if (waterVbo_) glDeleteBuffers(1, &waterVbo_);
+	if (waterEbo_) glDeleteBuffers(1, &waterEbo_);
 }
 
 BlockType Chunk::getBlock(int x, int y, int z) const {
@@ -36,6 +39,26 @@ bool Chunk::isCaveAir(int x, int y, int z) const {
 	if (getBlock(x, y, z) != BlockType::AIR)
 		return false;
 	return y < surfaceHeight_[z * CHUNK_W + x];
+}
+
+BlockType Chunk::getBlockCross(int x, int y, int z, const Chunk* north, const Chunk* south,
+                                const Chunk* east, const Chunk* west) const {
+	if (y < 0 || y >= CHUNK_H) return BlockType::AIR;
+	if (x < 0)         return west  ? west->getBlock(CHUNK_W + x, y, z)  : BlockType::AIR;
+	if (x >= CHUNK_W)  return east  ? east->getBlock(x - CHUNK_W, y, z)  : BlockType::AIR;
+	if (z < 0)         return north ? north->getBlock(x, y, CHUNK_D + z) : BlockType::AIR;
+	if (z >= CHUNK_D)  return south ? south->getBlock(x, y, z - CHUNK_D) : BlockType::AIR;
+	return getBlock(x, y, z);
+}
+
+bool Chunk::isCaveAirCross(int x, int y, int z, const Chunk* north, const Chunk* south,
+                            const Chunk* east, const Chunk* west) const {
+	if (y < 0 || y >= CHUNK_H) return false;
+	if (x < 0)         return west  && west->isCaveAir(CHUNK_W + x, y, z);
+	if (x >= CHUNK_W)  return east  && east->isCaveAir(x - CHUNK_W, y, z);
+	if (z < 0)         return north && north->isCaveAir(x, y, CHUNK_D + z);
+	if (z >= CHUNK_D)  return south && south->isCaveAir(x, y, z - CHUNK_D);
+	return isCaveAir(x, y, z);
 }
 
 int Chunk::getSurfaceHeight(int x, int z) const {
@@ -131,7 +154,7 @@ void Chunk::generate(const Noise& noise) {
 	dirty_ = true;
 }
 
-void Chunk::buildMesh() {
+void Chunk::buildMesh(const Chunk* north, const Chunk* south, const Chunk* east, const Chunk* west) {
 	// Each face: neighbor offset, faceID, 4 vertices (CCW from outside → correct winding for GL_CULL_FACE)
 	struct FaceTemplate {
 		int   nx, ny, nz;
@@ -166,7 +189,7 @@ void Chunk::buildMesh() {
 				float tid = static_cast<float>(static_cast<int>(blk));
 
 				for (const auto& f : faces) {
-					if (!transparent(getBlock(x + f.nx, y + f.ny, z + f.nz)))
+					if (!transparent(getBlockCross(x + f.nx, y + f.ny, z + f.nz, north, south, east, west)))
 						continue;
 
 					for (int v = 0; v < 4; v++) {
@@ -232,7 +255,7 @@ void Chunk::buildMesh() {
 				if (!isCaveAir(x, y, z)) continue;
 
 				for (const auto& f : faces) {
-					if (isCaveAir(x + f.nx, y + f.ny, z + f.nz))
+					if (isCaveAirCross(x + f.nx, y + f.ny, z + f.nz, north, south, east, west))
 						continue; // hidden between two adjoining void cells
 
 					for (int v = 0; v < 4; v++) {
@@ -282,7 +305,79 @@ void Chunk::buildMesh() {
 		glBindVertexArray(0);
 	}
 
+	// Water mesh: WATER is transparent for the solid pass above (so it
+	// doesn't hide neighboring terrain), but still needs a visible surface.
+	// Only face air — a face against solid ground or another water block
+	// would just be redundant/hidden geometry.
+	std::vector<float>        waterVerts;
+	std::vector<unsigned int> waterIdxs;
+	unsigned int              waterOff = 0;
+	float                     waterTid = static_cast<float>(static_cast<int>(BlockType::WATER));
+
+	for (int y = 0; y < CHUNK_H; y++) {
+		for (int z = 0; z < CHUNK_D; z++) {
+			for (int x = 0; x < CHUNK_W; x++) {
+				if (getBlock(x, y, z) != BlockType::WATER) continue;
+
+				for (const auto& f : faces) {
+					if (getBlockCross(x + f.nx, y + f.ny, z + f.nz, north, south, east, west) != BlockType::AIR)
+						continue;
+
+					for (int v = 0; v < 4; v++) {
+						waterVerts.insert(waterVerts.end(), {
+							x + f.vx[v][0],
+							y + f.vx[v][1],
+							z + f.vx[v][2],
+							waterTid + k_uvs[v][0],
+							k_uvs[v][1],
+							f.faceID
+						});
+					}
+					waterIdxs.insert(waterIdxs.end(),
+						{waterOff, waterOff+1, waterOff+2, waterOff, waterOff+2, waterOff+3});
+					waterOff += 4;
+				}
+			}
+		}
+	}
+
+	waterIndexCount_ = static_cast<int>(waterIdxs.size());
+	if (waterIndexCount_ > 0) {
+		if (!waterVao_) glGenVertexArrays(1, &waterVao_);
+		if (!waterVbo_) glGenBuffers(1, &waterVbo_);
+		if (!waterEbo_) glGenBuffers(1, &waterEbo_);
+
+		glBindVertexArray(waterVao_);
+
+		glBindBuffer(GL_ARRAY_BUFFER, waterVbo_);
+		glBufferData(GL_ARRAY_BUFFER,
+			waterVerts.size() * sizeof(float), waterVerts.data(), GL_STATIC_DRAW);
+
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, waterEbo_);
+		glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+			waterIdxs.size() * sizeof(unsigned int), waterIdxs.data(), GL_STATIC_DRAW);
+
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
+			6 * sizeof(float), reinterpret_cast<void*>(0));
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE,
+			6 * sizeof(float), reinterpret_cast<void*>(3 * sizeof(float)));
+		glEnableVertexAttribArray(1);
+		glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE,
+			6 * sizeof(float), reinterpret_cast<void*>(5 * sizeof(float)));
+		glEnableVertexAttribArray(2);
+
+		glBindVertexArray(0);
+	}
+
 	dirty_ = false;
+}
+
+void Chunk::renderWater() const {
+	if (!waterVao_ || waterIndexCount_ == 0) return;
+	glBindVertexArray(waterVao_);
+	glDrawElements(GL_TRIANGLES, waterIndexCount_, GL_UNSIGNED_INT, nullptr);
+	glBindVertexArray(0);
 }
 
 void Chunk::render(bool showCaveDebug) const {
