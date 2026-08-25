@@ -13,7 +13,12 @@ OBJS		= $(SRCS:$(SRC_DIR)/%.cpp=$(OBJ_DIR)/%.o)
 INCS		= -I$(INC_DIR) -I$(LIBS_DIR) $(shell pkg-config --cflags glfw3 glew 2>/dev/null)
 LIBS		= $(shell pkg-config --libs glfw3 glew 2>/dev/null || echo "-lglfw -lGLEW") -lGL
 
-all: $(NAME)
+all: deps $(NAME)
+
+deps:
+	@if [ ! -d $(LIBS_DIR)/glm ] || [ ! -f $(LIBS_DIR)/stb_image.h ]; then \
+		bash scripts/install_deps.sh; \
+	fi
 
 $(NAME): $(OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LIBS)
@@ -30,4 +35,4 @@ fclean: clean
 
 re: fclean all
 
-.PHONY: all clean fclean re
+.PHONY: all deps clean fclean re
