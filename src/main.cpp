@@ -1,4 +1,5 @@
 #include "../include/headers.hpp"
+#include <chrono>
 
 static constexpr float FOV           = 80.0f;
 static constexpr float CAMERA_SPEED  = 10.0f;
@@ -99,7 +100,27 @@ static unsigned int createBlockAtlas() {
 	return tex;
 }
 
-int main() {
+// Random by default (so every run gives a different world), unless a
+// specific world is requested with `--seed N` — generation is still fully
+// deterministic for any given seed, just not pinned to one by default.
+static uint64_t pickSeed(int argc, char** argv) {
+	for (int i = 1; i < argc; i++) {
+		if (std::string(argv[i]) == "--seed" && i + 1 < argc) {
+			try {
+				return std::stoull(argv[i + 1]);
+			} catch (const std::exception&) {
+				std::cerr << "Invalid --seed value '" << argv[i + 1] << "', using a random seed instead\n";
+				break;
+			}
+		}
+	}
+	return static_cast<uint64_t>(std::chrono::high_resolution_clock::now().time_since_epoch().count());
+}
+
+int main(int argc, char** argv) {
+	uint64_t seed = pickSeed(argc, argv);
+	std::cout << "World seed: " << seed << " (pass --seed " << seed << " to load this exact world again)" << std::endl;
+
 	if (!glfwInit()) {
 		std::cerr << "Failed to initialize GLFW\n";
 		return 1;
@@ -136,7 +157,7 @@ int main() {
 
 	try {
 		Shader       shader("shaders/vertex.glsl", "shaders/fragment.glsl");
-		World        world;
+		World        world(seed);
 		Hud          hud;
 		unsigned int atlas = createBlockAtlas();
 
