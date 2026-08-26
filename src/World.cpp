@@ -79,14 +79,10 @@ std::string World::getBiomeAt(const glm::vec3& pos) const {
 
 	int lx = wx - cx * CHUNK_W;
 	int lz = wz - cz * CHUNK_D;
-	int height = it->second->getSurfaceHeight(lx, lz);
-	if (height < 0)
+	if (it->second->getSurfaceHeight(lx, lz) < 0)
 		return "UNKNOWN";
 
-	if (height <= SEA_LEVEL)   return "OCEAN";
-	if (height >= SNOW_LEVEL)  return "SNOWY PEAKS";
-	if (height <= BEACH_LEVEL) return "BEACH";
-	return "PLAINS";
+	return biomeName(it->second->getBiome(lx, lz));
 }
 
 void World::loadChunk(int cx, int cz) {
@@ -95,7 +91,7 @@ void World::loadChunk(int cx, int cz) {
 	chunks_[ChunkKey{cx, cz}] = std::move(chunk);
 
 	// Any already-meshed neighbor built its shared edge assuming AIR here
-	// (this chunk didn't exist yet) — force it to rebuild against the real
+	// (this chunk didn't exist yet), force it to rebuild against the real
 	// data now that it does, or the seam persists even after this loads.
 	static constexpr int offsets[4][2] = {{0,-1}, {0,1}, {1,0}, {-1,0}};
 	for (auto& [dx, dz] : offsets) {

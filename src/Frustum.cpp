@@ -32,7 +32,7 @@ void Frustum::update(const glm::mat4& m) {
 
 // For each frustum plane, find the AABB corner most aligned with the plane
 // normal (the "positive vertex"). If even that corner is outside the plane,
-// the entire box is outside — cull it.
+// the entire box is outside, cull it.
 bool Frustum::intersects(const AABB& box) const {
 	for (const auto& p : planes_) {
 		glm::vec3 pv(

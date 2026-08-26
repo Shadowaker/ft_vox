@@ -20,7 +20,7 @@ class Noise {
 		float sample2D(float x, float y) const;
 		float sample3D(float x, float y, float z) const;
 
-		// Fractional Brownian Motion — sum of octaves
+		// Fractional Brownian Motion, sum of octaves
 		float fbm2D(float x, float y,
 		            int octaves, float persistence = 0.5f, float lacunarity = 2.0f) const;
 		float fbm3D(float x, float y, float z,

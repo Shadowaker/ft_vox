@@ -35,8 +35,7 @@ public:
 	// terrain (see main.cpp for the blend/depth-write state around this).
 	void renderWater(const Shader& shader, const glm::mat4& vp) const;
 
-	// Name of the biome at this world position's column, derived from the
-	// same height bands used during terrain generation. "UNKNOWN" if the
+	// Name of the biome at this world position's column. "UNKNOWN" if the
 	// containing chunk hasn't been generated/loaded yet.
 	std::string getBiomeAt(const glm::vec3& pos) const;
 

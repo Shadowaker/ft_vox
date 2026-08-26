@@ -1,4 +1,5 @@
 #include "../include/Hud.hpp"
+#include "../include/GpuMemory.hpp"
 
 #include <GL/glew.h>
 #include <cctype>
@@ -11,7 +12,7 @@ namespace {
 // Only the characters actually needed by the debug HUD (FPS counter + the
 // biome names in World::getBiomeAt) are defined; anything else falls back
 // to a blank glyph in glyphIndex().
-constexpr int NUM_GLYPHS = 26;
+constexpr int NUM_GLYPHS = 33;
 constexpr int GLYPH_W    = 5;
 constexpr int GLYPH_H    = 7;
 constexpr int CELL       = 8; // 5x7 glyph inset by 1px on all sides, for padding
@@ -49,6 +50,13 @@ constexpr Glyph FONT[NUM_GLYPHS] = {
 	{0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110}, // S
 	{0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b11011, 0b10001}, // W
 	{0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100}, // Y
+	{0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110}, // D
+	{0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001}, // K
+	{0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001}, // M
+	{0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001}, // R
+	{0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100}, // T
+	{0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110}, // U
+	{0b10001, 0b10001, 0b10001, 0b01010, 0b01010, 0b00100, 0b00100}, // V
 };
 
 int glyphIndex(char c) {
@@ -62,6 +70,9 @@ int glyphIndex(char c) {
 		case 'I': return 18; case 'L': return 19; case 'N': return 20;
 		case 'O': return 21; case 'P': return 22; case 'S': return 23;
 		case 'W': return 24; case 'Y': return 25;
+		case 'D': return 26; case 'K': return 27; case 'M': return 28;
+		case 'R': return 29; case 'T': return 30; case 'U': return 31;
+		case 'V': return 32;
 		default:  return 0; // unsupported char → blank cell
 	}
 }
@@ -95,6 +106,8 @@ unsigned int Hud::buildFontAtlas() {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+	GpuMemory::adjust(static_cast<long long>(data.size()));
 	return tex;
 }
 
@@ -119,7 +132,14 @@ Hud::Hud() {
 Hud::~Hud() {
 	if (vao_) glDeleteVertexArrays(1, &vao_);
 	if (vbo_) glDeleteBuffers(1, &vbo_);
-	if (fontTex_) glDeleteTextures(1, &fontTex_);
+	if (fontTex_) {
+		glDeleteTextures(1, &fontTex_);
+		GpuMemory::adjust(-static_cast<long long>(NUM_GLYPHS * CELL * CELL * 4));
+	}
+}
+
+float Hud::textWidth(const std::string& text, float scale) {
+	return static_cast<float>(text.size()) * CELL * scale;
 }
 
 void Hud::renderText(const std::string& text, float x, float y, float scale,
@@ -153,7 +173,7 @@ void Hud::renderText(const std::string& text, float x, float y, float scale,
 
 	shader_->use();
 	shader_->setMat4("projection", projection);
-	// Unit 1, not 0 — unit 0 is where main.cpp permanently binds the world
+	// Unit 1, not 0, unit 0 is where main.cpp permanently binds the world
 	// block atlas; reusing it here would clobber that binding every frame.
 	shader_->setInt("fontAtlas", 1);
 	glActiveTexture(GL_TEXTURE1);

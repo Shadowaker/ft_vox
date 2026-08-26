@@ -16,6 +16,7 @@
 
 #include "../include/Camera.hpp"
 #include "../include/Chunk.hpp"
+#include "../include/GpuMemory.hpp"
 #include "../include/Hud.hpp"
 #include "../include/Shader.hpp"
 #include "../include/Skybox.hpp"

@@ -1,4 +1,5 @@
 #include "../include/Skybox.hpp"
+#include "../include/GpuMemory.hpp"
 
 #include <GL/glew.h>
 #include <glm/gtc/matrix_transform.hpp>
@@ -6,7 +7,7 @@
 namespace {
 
 // 36 vertices, position-only, a unit cube meant to be viewed from the
-// inside. Winding doesn't matter — Skybox::render is drawn with face
+// inside. Winding doesn't matter, Skybox::render is drawn with face
 // culling disabled.
 constexpr float kVertices[] = {
 	-1.0f,  1.0f, -1.0f,  -1.0f, -1.0f, -1.0f,   1.0f, -1.0f, -1.0f,
@@ -42,15 +43,18 @@ Skybox::Skybox() {
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), reinterpret_cast<void*>(0));
 	glEnableVertexAttribArray(0);
 	glBindVertexArray(0);
+
+	GpuMemory::adjust(static_cast<long long>(sizeof(kVertices)));
 }
 
 Skybox::~Skybox() {
 	if (vao_) glDeleteVertexArrays(1, &vao_);
 	if (vbo_) glDeleteBuffers(1, &vbo_);
+	GpuMemory::adjust(-static_cast<long long>(sizeof(kVertices)));
 }
 
 void Skybox::render(const glm::mat4& view, const glm::mat4& projection) const {
-	// Strip translation so the skybox never moves relative to the camera —
+	// Strip translation so the skybox never moves relative to the camera,
 	// only rotation affects it, keeping it infinitely distant.
 	glm::mat4 viewNoTranslation = glm::mat4(glm::mat3(view));
 

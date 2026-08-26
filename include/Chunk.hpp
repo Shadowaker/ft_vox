@@ -17,15 +17,29 @@ enum class BlockType : uint8_t {
 	SAND,
 	SNOW,
 	WATER,
+	FOREST_GRASS,
 	COUNT
 };
+
+enum class Biome : uint8_t {
+	OCEAN,
+	BEACH,
+	SNOWY_PEAKS,
+	DESERT,
+	PLAINS,
+	FOREST,
+	MOUNTAINS,
+};
+
+const char* biomeName(Biome b);
 
 constexpr int CHUNK_W = 16;
 constexpr int CHUNK_H = 256;
 constexpr int CHUNK_D = 16;
 
 // Height bands used for both block placement (Chunk::generate) and biome
-// naming (World::getBiomeAt) — kept in one place so they can't drift apart.
+// classification (Chunk::classifyBiome), kept in one place so they can't
+// drift apart.
 constexpr int SEA_LEVEL   = 64;
 constexpr int SNOW_LEVEL  = 140;
 constexpr int BEACH_LEVEL = SEA_LEVEL + 3;
@@ -37,7 +51,7 @@ public:
 
 	void generate(const Noise& noise);
 	// Neighbor chunks (already-loaded, may be null) let mesh building see
-	// past this chunk's own edge instead of assuming AIR there — without
+	// past this chunk's own edge instead of assuming AIR there, without
 	// them, chunk borders show phantom faces (visible as seams in water).
 	void buildMesh(const Chunk* north = nullptr, const Chunk* south = nullptr,
 	               const Chunk* east = nullptr,  const Chunk* west = nullptr);
@@ -45,7 +59,7 @@ public:
 	// showCaveDebug: draw the translucent underground-air visualization mesh
 	// instead of the normal solid terrain mesh (see World::render).
 	void render(bool showCaveDebug = false) const;
-	// Translucent water surface — separate mesh/draw call so it can be
+	// Translucent water surface, separate mesh/draw call so it can be
 	// rendered with blending after opaque terrain (see World::renderWater).
 	void renderWater() const;
 
@@ -59,9 +73,13 @@ public:
 	// Returns -1 if (x, z) is outside the chunk.
 	int getSurfaceHeight(int x, int z) const;
 
+	Biome getBiome(int x, int z) const;
+
 private:
+	static Biome classifyBiome(int height, float temperature, float humidity);
+
 	// True for AIR blocks enclosed underground (below the column's surface
-	// height) — i.e. actual carved cave space, not open sky above terrain.
+	// height), i.e. actual carved cave space, not open sky above terrain.
 	bool isCaveAir(int x, int y, int z) const;
 
 	// Cross-chunk versions: fall back to the given neighbor when (x, y, z)
@@ -78,17 +96,20 @@ private:
 
 	std::array<BlockType, CHUNK_W * CHUNK_H * CHUNK_D> blocks_{};
 	std::array<int, CHUNK_W * CHUNK_D>                 surfaceHeight_{};
+	std::array<Biome, CHUNK_W * CHUNK_D>               biome_{};
 
 	unsigned int vao_ = 0;
 	unsigned int vbo_ = 0;
 	unsigned int ebo_ = 0;
 	int          indexCount_ = 0;
+	size_t       vaoBytes_ = 0;
 
 	// Debug mesh: cave-air voxels rendered as translucent blocks
 	unsigned int caveVao_ = 0;
 	unsigned int caveVbo_ = 0;
 	unsigned int caveEbo_ = 0;
 	int          caveIndexCount_ = 0;
+	size_t       caveBytes_ = 0;
 
 	// Water mesh: WATER blocks are transparent for the solid-mesh pass (so
 	// they don't hide neighboring terrain faces) but need their own visible
@@ -97,4 +118,5 @@ private:
 	unsigned int waterVbo_ = 0;
 	unsigned int waterEbo_ = 0;
 	int          waterIndexCount_ = 0;
+	size_t       waterBytes_ = 0;
 };

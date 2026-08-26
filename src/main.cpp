@@ -1,5 +1,7 @@
 #include "../include/headers.hpp"
 #include <chrono>
+#include <fstream>
+#include <sstream>
 
 static constexpr float FOV           = 80.0f;
 static constexpr float CAMERA_SPEED  = 10.0f;
@@ -68,6 +70,7 @@ static unsigned int createBlockAtlas() {
 		{ 210, 200, 140, 255 }, // SAND
 		{ 240, 245, 255, 255 }, // SNOW
 		{  30, 100, 220, 220 }, // WATER
+		{  35,  95,  40, 255 }, // FOREST_GRASS
 		{ 255,  60,  60, 130 }, // DEBUG: cave air
 	};
 	constexpr int COUNT = static_cast<int>(BlockType::COUNT) + 1; // +1 for the debug tile
@@ -97,11 +100,13 @@ static unsigned int createBlockAtlas() {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+	GpuMemory::adjust(static_cast<long long>(data.size()));
 	return tex;
 }
 
 // Random by default (so every run gives a different world), unless a
-// specific world is requested with `--seed N` — generation is still fully
+// specific world is requested with `--seed N`, generation is still fully
 // deterministic for any given seed, just not pinned to one by default.
 static uint64_t pickSeed(int argc, char** argv) {
 	for (int i = 1; i < argc; i++) {
@@ -115,6 +120,19 @@ static uint64_t pickSeed(int argc, char** argv) {
 		}
 	}
 	return static_cast<uint64_t>(std::chrono::high_resolution_clock::now().time_since_epoch().count());
+}
+
+static long readProcessRssKb() {
+	std::ifstream status("/proc/self/status");
+	std::string   line;
+	while (std::getline(status, line)) {
+		if (line.rfind("VmRSS:", 0) != 0) continue;
+		std::istringstream iss(line.substr(6));
+		long kb = 0;
+		if (iss >> kb) return kb;
+		break;
+	}
+	return 0;
 }
 
 int main(int argc, char** argv) {
@@ -173,6 +191,7 @@ int main(int argc, char** argv) {
 		float fpsTimer   = 0.0f;
 		int   fpsFrames  = 0;
 		int   fpsDisplay = 0;
+		long  ramDisplayKb = 0;
 
 		while (!glfwWindowShouldClose(window)) {
 			float currentFrame = static_cast<float>(glfwGetTime());
@@ -185,6 +204,7 @@ int main(int argc, char** argv) {
 				fpsDisplay = static_cast<int>(fpsFrames / fpsTimer);
 				fpsFrames  = 0;
 				fpsTimer   = 0.0f;
+				ramDisplayKb = readProcessRssKb();
 			}
 
 			processInput(window, deltaTime);
@@ -250,20 +270,29 @@ int main(int argc, char** argv) {
 				glDisable(GL_BLEND);
 			}
 
-			// HUD: FPS counter and current biome, top-left corner, always on top
+			// HUD: FPS counter and current biome (top-left), RAM/VRAM usage
+			// (top-right), always on top.
 			{
 				std::string fpsLine   = "FPS: " + std::to_string(fpsDisplay);
 				std::string biomeLine = world.getBiomeAt(camera.getPosition());
+				std::string ramLine   = "RAM: "  + std::to_string(ramDisplayKb / 1024) + " MB";
+				std::string vramLine  = "VRAM: " + std::to_string(GpuMemory::total() / (1024 * 1024)) + " MB";
 				constexpr float scale      = 2.0f;
 				constexpr float lineHeight = 8.0f * scale + 4.0f; // glyph cell + gap
+				constexpr float margin     = 10.0f;
 
 				glDisable(GL_DEPTH_TEST); // always draw on top of the world
 				glDisable(GL_CULL_FACE);
 				glEnable(GL_BLEND);
 				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-				hud.renderText(fpsLine,   10.0f, 10.0f,              scale, width, height);
-				hud.renderText(biomeLine, 10.0f, 10.0f + lineHeight, scale, width, height);
+				hud.renderText(fpsLine,   margin, margin,              scale, width, height);
+				hud.renderText(biomeLine, margin, margin + lineHeight, scale, width, height);
+
+				float ramX  = static_cast<float>(width) - margin - Hud::textWidth(ramLine,  scale);
+				float vramX = static_cast<float>(width) - margin - Hud::textWidth(vramLine, scale);
+				hud.renderText(ramLine,  ramX,  margin,              scale, width, height);
+				hud.renderText(vramLine, vramX, margin + lineHeight, scale, width, height);
 
 				glDisable(GL_BLEND);
 				glEnable(GL_CULL_FACE);

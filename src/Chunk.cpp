@@ -1,8 +1,31 @@
 #include "../include/Chunk.hpp"
+#include "../include/GpuMemory.hpp"
 
 #include <GL/glew.h>
 #include <algorithm>
 #include <vector>
+
+// Terrain generation constants (SEA_LEVEL, SNOW_LEVEL, BEACH_LEVEL are in Chunk.hpp)
+static constexpr float CONTINENT_SC  = 0.0008f; // large landmasses
+static constexpr float MOUNTAIN_SC   = 0.003f;  // mountain ridges
+static constexpr float DETAIL_SC     = 0.015f;  // surface roughness
+static constexpr float CAVE_SC       = 0.02f;   // cave cavern noise frequency
+// carve air where noise EXCEEDS this cutoff (one-sided, no abs()). |noise| <
+// thresh selects a band around the zero-crossing, which is a thin 2D sheet in
+// 3D space no matter how it's scaled, measured true diameter ~1.5 blocks,
+// matching the "1-2 blocks wide" report. A one-sided cutoff instead carves out
+// the noise field's local maxima as actual 3D blobs: measured ~9.5 block
+// diameter at 0.4, roomy Minecraft-cavern-like chambers instead of slits.
+static constexpr float CAVE_CUTOFF          = 0.4f;   // interior: ~8% air, ~9.5 block diameter
+static constexpr float CAVE_ENTRANCE_CUTOFF = 0.5f;    // stricter near surface → rarer breaches (~3% vs ~8%)
+static constexpr float WARP_SC       = 0.002f;  // domain-warp scale
+static constexpr float BIOME_SC      = 0.0004f; // climate noise frequency
+static constexpr float BIOME_COLD_CUTOFF = -0.08f; // colder than this → MOUNTAINS
+static constexpr float BIOME_HOT_CUTOFF  =  0.08f; // hotter than this → DESERT or FOREST
+static constexpr float MOUNTAIN_RAMP_RANGE = 0.15f;
+static constexpr float MOUNTAIN_SCALE_FLAT = 15.0f;
+static constexpr float MOUNTAIN_SCALE_PEAK = 260.0f;
+static constexpr int   MOUNTAIN_SNOW_LEVEL = 100; // local snowline for MOUNTAINS columns, below the global SNOW_LEVEL
 
 Chunk::Chunk(int cx, int cz) : cx_(cx), cz_(cz) {
 	blocks_.fill(BlockType::AIR);
@@ -18,6 +41,10 @@ Chunk::~Chunk() {
 	if (waterVao_) glDeleteVertexArrays(1, &waterVao_);
 	if (waterVbo_) glDeleteBuffers(1, &waterVbo_);
 	if (waterEbo_) glDeleteBuffers(1, &waterEbo_);
+
+	GpuMemory::adjust(-static_cast<long long>(vaoBytes_)
+	                   -static_cast<long long>(caveBytes_)
+	                   -static_cast<long long>(waterBytes_));
 }
 
 BlockType Chunk::getBlock(int x, int y, int z) const {
@@ -35,7 +62,7 @@ void Chunk::setBlock(int x, int y, int z, BlockType type) {
 
 bool Chunk::isCaveAir(int x, int y, int z) const {
 	if (x < 0 || x >= CHUNK_W || y < 0 || y >= CHUNK_H || z < 0 || z >= CHUNK_D)
-		return false; // unknown across chunk borders — treat as not-cave
+		return false; // unknown across chunk borders, treat as not-cave
 	if (getBlock(x, y, z) != BlockType::AIR)
 		return false;
 	return y < surfaceHeight_[z * CHUNK_W + x];
@@ -67,20 +94,35 @@ int Chunk::getSurfaceHeight(int x, int z) const {
 	return surfaceHeight_[z * CHUNK_W + x];
 }
 
-// Terrain generation constants (SEA_LEVEL, SNOW_LEVEL, BEACH_LEVEL are in Chunk.hpp)
-static constexpr float CONTINENT_SC  = 0.0008f; // large landmasses
-static constexpr float MOUNTAIN_SC   = 0.003f;  // mountain ridges
-static constexpr float DETAIL_SC     = 0.015f;  // surface roughness
-static constexpr float CAVE_SC       = 0.02f;   // cave cavern noise frequency
-// carve air where noise EXCEEDS this cutoff (one-sided, no abs()). |noise| <
-// thresh selects a band around the zero-crossing, which is a thin 2D sheet in
-// 3D space no matter how it's scaled — measured true diameter ~1.5 blocks,
-// matching the "1-2 blocks wide" report. A one-sided cutoff instead carves out
-// the noise field's local maxima as actual 3D blobs: measured ~9.5 block
-// diameter at 0.4, roomy Minecraft-cavern-like chambers instead of slits.
-static constexpr float CAVE_CUTOFF          = 0.4f;   // interior: ~8% air, ~9.5 block diameter
-static constexpr float CAVE_ENTRANCE_CUTOFF = 0.5f;    // stricter near surface → rarer breaches (~3% vs ~8%)
-static constexpr float WARP_SC       = 0.002f;  // domain-warp scale
+Biome Chunk::getBiome(int x, int z) const {
+	if (x < 0 || x >= CHUNK_W || z < 0 || z >= CHUNK_D)
+		return Biome::OCEAN;
+	return biome_[z * CHUNK_W + x];
+}
+
+const char* biomeName(Biome b) {
+	switch (b) {
+		case Biome::OCEAN:       return "OCEAN";
+		case Biome::BEACH:       return "BEACH";
+		case Biome::SNOWY_PEAKS: return "SNOWY PEAKS";
+		case Biome::DESERT:      return "DESERT";
+		case Biome::PLAINS:      return "PLAINS";
+		case Biome::FOREST:      return "FOREST";
+		case Biome::MOUNTAINS:   return "MOUNTAINS";
+	}
+	return "UNKNOWN";
+}
+
+Biome Chunk::classifyBiome(int height, float temperature, float humidity) {
+	if (height <= SEA_LEVEL)   return Biome::OCEAN;
+	if (height >= SNOW_LEVEL)  return Biome::SNOWY_PEAKS;
+	if (height <= BEACH_LEVEL) return Biome::BEACH;
+
+	if (temperature < BIOME_COLD_CUTOFF)                        return Biome::MOUNTAINS;
+	if (temperature > BIOME_HOT_CUTOFF && humidity < 0.0f)      return Biome::DESERT;
+	if (temperature > BIOME_HOT_CUTOFF)                         return Biome::FOREST;
+	return Biome::PLAINS;
+}
 
 void Chunk::generate(const Noise& noise) {
 	for (int x = 0; x < CHUNK_W; x++) {
@@ -94,6 +136,8 @@ void Chunk::generate(const Noise& noise) {
 			float sx = wx + warpX;
 			float sz = wz + warpZ;
 
+			float temperature = noise.fbm2D(wx * BIOME_SC + 1000.0f, wz * BIOME_SC + 1000.0f, 4);
+
 			// Continent: broad elevation bias [-1, 1]
 			float continent = noise.fbm2D(sx * CONTINENT_SC, sz * CONTINENT_SC, 5, 0.5f, 2.0f);
 			// Mountain ridges: squared to create sharp peaks
@@ -102,17 +146,27 @@ void Chunk::generate(const Noise& noise) {
 			// Fine surface detail
 			float detail    = noise.fbm2D(wx * DETAIL_SC,    wz * DETAIL_SC,    3, 0.45f, 2.1f);
 
+			float mtn = std::clamp((BIOME_COLD_CUTOFF - temperature) / MOUNTAIN_RAMP_RANGE, 0.0f, 1.0f);
+			mtn = mtn * mtn * (3.0f - 2.0f * mtn); // smoothstep
+			float mountainScale = MOUNTAIN_SCALE_FLAT + (MOUNTAIN_SCALE_PEAK - MOUNTAIN_SCALE_FLAT) * mtn;
+
 			int height = static_cast<int>(
 				SEA_LEVEL
 				+ continent * 40.0f
-				+ mountain  * 60.0f
+				+ mountain  * mountainScale
 				+ detail    *  6.0f
 			);
 			height = std::clamp(height, 2, CHUNK_H - 2);
 			surfaceHeight_[z * CHUNK_W + x] = height;
 
-			bool isSandy = height <= BEACH_LEVEL;
-			bool isSnowy = height >= SNOW_LEVEL;
+			float humidity = noise.fbm2D(wx * BIOME_SC + 2000.0f, wz * BIOME_SC - 2000.0f, 4);
+			Biome biome = classifyBiome(height, temperature, humidity);
+			biome_[z * CHUNK_W + x] = biome;
+
+			bool isSandy    = height <= BEACH_LEVEL || biome == Biome::DESERT;
+			bool isForest   = biome == Biome::FOREST;
+			bool isMountain = biome == Biome::MOUNTAINS;
+			bool isSnowy    = height >= SNOW_LEVEL || (isMountain && height >= MOUNTAIN_SNOW_LEVEL);
 
 			for (int y = 0; y < CHUNK_H; y++) {
 				if (y > height) {
@@ -123,7 +177,7 @@ void Chunk::generate(const Noise& noise) {
 					continue;
 				}
 
-				// Cave carving — skip at bedrock; stricter near the surface so
+				// Cave carving, skip at bedrock; stricter near the surface so
 				// tunnels only breach as rarer entrances instead of everywhere.
 				// Includes y == height so a carved tunnel can punch through
 				// the surface skin itself, not just stop just beneath it.
@@ -139,12 +193,15 @@ void Chunk::generate(const Noise& noise) {
 				if (y == 0) {
 					setBlock(x, y, z, BlockType::STONE); // indestructible base
 				} else if (y == height) {
-					if      (isSnowy)  setBlock(x, y, z, BlockType::SNOW);
-					else if (isSandy)  setBlock(x, y, z, BlockType::SAND);
-					else               setBlock(x, y, z, BlockType::GRASS);
+					if      (isSnowy)    setBlock(x, y, z, BlockType::SNOW);
+					else if (isMountain) setBlock(x, y, z, BlockType::STONE); // bare rock, no grass/dirt
+					else if (isSandy)    setBlock(x, y, z, BlockType::SAND);
+					else if (isForest)   setBlock(x, y, z, BlockType::FOREST_GRASS);
+					else                 setBlock(x, y, z, BlockType::GRASS);
 				} else if (y >= height - 3) {
-					if (isSandy)       setBlock(x, y, z, BlockType::SAND);
-					else               setBlock(x, y, z, BlockType::DIRT);
+					if      (isMountain) setBlock(x, y, z, BlockType::STONE);
+					else if (isSandy)    setBlock(x, y, z, BlockType::SAND);
+					else                 setBlock(x, y, z, BlockType::DIRT);
 				} else {
 					setBlock(x, y, z, BlockType::STONE);
 				}
@@ -225,6 +282,10 @@ void Chunk::buildMesh(const Chunk* north, const Chunk* south, const Chunk* east,
 		glBufferData(GL_ELEMENT_ARRAY_BUFFER,
 			idxs.size() * sizeof(unsigned int), idxs.data(), GL_STATIC_DRAW);
 
+		size_t newBytes = verts.size() * sizeof(float) + idxs.size() * sizeof(unsigned int);
+		GpuMemory::adjust(static_cast<long long>(newBytes) - static_cast<long long>(vaoBytes_));
+		vaoBytes_ = newBytes;
+
 		// location 0: position (vec3)
 		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
 			6 * sizeof(float), reinterpret_cast<void*>(0));
@@ -292,6 +353,10 @@ void Chunk::buildMesh(const Chunk* north, const Chunk* south, const Chunk* east,
 		glBufferData(GL_ELEMENT_ARRAY_BUFFER,
 			caveIdxs.size() * sizeof(unsigned int), caveIdxs.data(), GL_STATIC_DRAW);
 
+		size_t newCaveBytes = caveVerts.size() * sizeof(float) + caveIdxs.size() * sizeof(unsigned int);
+		GpuMemory::adjust(static_cast<long long>(newCaveBytes) - static_cast<long long>(caveBytes_));
+		caveBytes_ = newCaveBytes;
+
 		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
 			6 * sizeof(float), reinterpret_cast<void*>(0));
 		glEnableVertexAttribArray(0);
@@ -307,7 +372,7 @@ void Chunk::buildMesh(const Chunk* north, const Chunk* south, const Chunk* east,
 
 	// Water mesh: WATER is transparent for the solid pass above (so it
 	// doesn't hide neighboring terrain), but still needs a visible surface.
-	// Only face air — a face against solid ground or another water block
+	// Only face air, a face against solid ground or another water block
 	// would just be redundant/hidden geometry.
 	std::vector<float>        waterVerts;
 	std::vector<unsigned int> waterIdxs;
@@ -356,6 +421,10 @@ void Chunk::buildMesh(const Chunk* north, const Chunk* south, const Chunk* east,
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, waterEbo_);
 		glBufferData(GL_ELEMENT_ARRAY_BUFFER,
 			waterIdxs.size() * sizeof(unsigned int), waterIdxs.data(), GL_STATIC_DRAW);
+
+		size_t newWaterBytes = waterVerts.size() * sizeof(float) + waterIdxs.size() * sizeof(unsigned int);
+		GpuMemory::adjust(static_cast<long long>(newWaterBytes) - static_cast<long long>(waterBytes_));
+		waterBytes_ = newWaterBytes;
 
 		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
 			6 * sizeof(float), reinterpret_cast<void*>(0));

@@ -7,7 +7,7 @@ out vec4 FragColor;
 
 uniform sampler2D textureAtlas;
 
-const float ATLAS_W = 8.0; // 7 block types + 1 debug tile (cave-air visualization)
+const float ATLAS_W = 9.0; // 8 block types + 1 debug tile (cave-air visualization)
 
 // Directional lighting per face
 float faceLight(float id) {
